@@ -1,20 +1,18 @@
 import os
-from dotenv import load_dotenv
 import requests
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
-load_dotenv()  # Загружаем переменные из .env
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
+# Прямая вставка токенов (замените на свои реальные токены)
+BOT_TOKEN = "8729937825:AAH4pBjxa0T5RZz4ZJo_yqpQQvKpEhPeJio"  # ВАШ РЕАЛЬНЫЙ ТОКЕН
+CRYPTO_TOKEN = "55871:AAroJKn4AgOhd3XcCt6dFDH5W2P9Ezac2Dd"  # ВАШ РЕАЛЬНЫЙ ТОКЕН CRYPTO PAY
 
 # Проверка наличия токенов
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не найден в переменных окружения!")
-if not CRYPTO_TOKEN:
-    raise ValueError("CRYPTO_TOKEN не найден в переменных окружения!")
+if not BOT_TOKEN or BOT_TOKEN == "BOT_TOKEN":
+    raise ValueError("Пожалуйста, замените BOT_TOKEN на реальный токен!")
+if not CRYPTO_TOKEN or CRYPTO_TOKEN == "CRYPTO_TOKEN":
+    raise ValueError("Пожалуйста, замените CRYPTO_TOKEN на реальный токен!")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -52,11 +50,14 @@ async def withdraw(callback: types.CallbackQuery):
     data = {
         "user_id": user_id,
         "asset": "USDT",
-        "amount": balance
+        "amount": str(balance)  # Изменил на строку, если API требует
     }
 
     try:
+        print(f"Отправка запроса: {data}")  # Для отладки
         r = requests.post(API_URL + "transfer", headers=headers, json=data)
+        print(f"Ответ: {r.text}")  # Для отладки
+        
         result = r.json()
 
         if result.get("ok"):
@@ -66,7 +67,8 @@ async def withdraw(callback: types.CallbackQuery):
             error_msg = result.get("error", "Неизвестная ошибка")
             await callback.message.answer(f"❌ Ошибка выплаты: {error_msg}")
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка соединения: {e}")
+        await callback.message.answer(f"❌ Ошибка соединения: {str(e)}")
 
 if __name__ == "__main__":
+    print("Бот запущен...")
     executor.start_polling(dp)
