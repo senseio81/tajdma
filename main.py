@@ -1,9 +1,8 @@
 import os
 import logging
 from datetime import datetime, date
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ParseMode
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from telegram.constants import ParseMode
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -12,6 +11,7 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Кастомные ID для эмодзи (если не работают - используй обычные эмодзи)
 EMOJI_IDS = {
     "diamond": "5427168083074628963",
     "money": "5409048419211682843",
@@ -20,14 +20,17 @@ EMOJI_IDS = {
 }
 
 def format_emoji(emoji_char: str, emoji_id: str = None) -> str:
+    """Форматирует эмодзи с кастомным ID или возвращает обычный эмодзи"""
     if emoji_id:
         return f'<tg-emoji emoji-id="{emoji_id}">{emoji_char}</tg-emoji>'
     return emoji_char
 
 def get_db_connection():
+    """Создает соединение с базой данных"""
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 def init_db():
+    """Инициализирует таблицы в базе данных"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
@@ -49,6 +52,7 @@ def init_db():
     conn.close()
 
 def get_user(user_id):
+    """Получает данные пользователя из базы"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
@@ -58,6 +62,7 @@ def get_user(user_id):
     return user
 
 def create_user(user_id, username, first_name):
+    """Создает нового пользователя в базе"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
@@ -69,6 +74,7 @@ def create_user(user_id, username, first_name):
     conn.close()
 
 def update_user_data(user_id, balance=None, turnover=None):
+    """Обновляет данные пользователя"""
     conn = get_db_connection()
     cur = conn.cursor()
     if balance is not None:
@@ -80,6 +86,7 @@ def update_user_data(user_id, balance=None, turnover=None):
     conn.close()
 
 def get_league(turnover):
+    """Определяет лигу пользователя по обороту"""
     if turnover < 300:
         return ("👀", "Зритель", "5210956306952758910")
     elif turnover < 600:
@@ -88,6 +95,7 @@ def get_league(turnover):
         return ("👑", "Профи", "5217822164362739968")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
     user = update.effective_user
     user_id = user.id
     username = user.username
@@ -107,6 +115,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает профиль пользователя"""
     user_id = update.effective_user.id
     user_data = get_user(user_id)
     
@@ -120,13 +129,15 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     emoji, league_name, emoji_id = get_league(turnover)
     
+    # Исправленная логика следующей лиги
     if turnover < 300:
         next_league = f"{300 - turnover} из 300"
     elif turnover < 600:
-        next_league = f"{600 - turnover} из 300"
+        next_league = f"{600 - turnover} из 600"
     else:
         next_league = "Максимальная лига достигнута 👑"
     
+    # Форматируем эмодзи
     diamond = format_emoji("💎", EMOJI_IDS["diamond"])
     money = format_emoji("💵", EMOJI_IDS["money"])
     calendar = format_emoji("🗓", EMOJI_IDS["calendar"])
@@ -157,6 +168,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
 
 async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатия на reply кнопки"""
     text = update.message.text
     
     if text == "🔐 Профиль":
@@ -166,13 +178,20 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("🚧 Игра в разработке")
 
 async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатия на inline кнопки"""
     query = update.callback_query
     await query.answer()
     
+    # Проверка на наличие данных callback
+    if not query.data:
+        return
+    
     if query.data == "deposit":
         await query.edit_message_text("🚧 Пополнение в разработке")
+    
     elif query.data == "withdraw":
         await query.edit_message_text("🚧 Вывод в разработке")
+    
     elif query.data == "promo":
         promo_text = (
             "💎 Акция 250$\n\n"
@@ -190,11 +209,20 @@ async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [[InlineKeyboardButton("✅ Участвовать", callback_data="join_promo")]]
         markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(promo_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+    
     elif query.data == "join_promo":
         user = update.effective_user
         user_id = user.id
-        current_name = user.first_name or ""
-        current_bio = user.bio or ""
+        
+        try:
+            # Получаем актуальную информацию о пользователе из Telegram
+            chat = await context.bot.get_chat(user_id)
+            current_name = chat.first_name or user.first_name or ""
+            current_bio = chat.bio or ""
+        except Exception as e:
+            logging.error(f"Ошибка получения данных чата: {e}")
+            current_name = user.first_name or ""
+            current_bio = ""
         
         conn = get_db_connection()
         cur = conn.cursor()
@@ -210,14 +238,19 @@ async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("✅ Вы участвуете в акции! Ваши данные сохранены.", show_alert=True)
 
 def main():
+    """Главная функция запуска бота"""
+    # Инициализируем базу данных
     init_db()
     
+    # Создаем приложение
     app = Application.builder().token(BOT_TOKEN).build()
     
+    # Добавляем обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Text(["🔐 Профиль", "🎲 Играть"]), handle_reply_buttons))
     app.add_handler(CallbackQueryHandler(handle_inline_buttons))
     
+    # Запускаем бота
     app.run_polling()
 
 if __name__ == "__main__":
