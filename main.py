@@ -12,6 +12,18 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+EMOJI_IDS = {
+    "diamond": "5427168083074628963",
+    "money": "5409048419211682843",
+    "calendar": "5413879192267805083",
+    "star": "5438496463044752972",
+}
+
+def format_emoji(emoji_char: str, emoji_id: str = None) -> str:
+    if emoji_id:
+        return f'<tg-emoji emoji-id="{emoji_id}">{emoji_char}</tg-emoji>'
+    return emoji_char
+
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
@@ -115,13 +127,19 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         next_league = "Максимальная лига достигнута 👑"
     
+    diamond = format_emoji("💎", EMOJI_IDS["diamond"])
+    money = format_emoji("💵", EMOJI_IDS["money"])
+    calendar = format_emoji("🗓", EMOJI_IDS["calendar"])
+    star = format_emoji("⭐️", EMOJI_IDS["star"])
+    league_emoji = format_emoji(emoji, emoji_id)
+    
     text = (
-        f'<tg-emoji emoji-id="5427168083074628963">💎</tg-emoji> Ваш профиль ›\n'
-        f'├ Баланс: {balance} <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji>\n\n'
-        f'<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> Вы с нами уже {days} дней\n\n'
-        f'<tg-emoji emoji-id="5438496463044752972">⭐️</tg-emoji> Ваша лига: <tg-emoji emoji-id="{emoji_id}">{emoji}</tg-emoji> {league_name}\n'
-        f'├ Оборот: {turnover} <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji>\n'
-        f'└ До следующей лиги: {next_league} <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji>'
+        f'{diamond} Ваш профиль ›\n'
+        f'├ Баланс: {balance} {money}\n\n'
+        f'{calendar} Вы с нами уже {days} дней\n\n'
+        f'{star} Ваша лига: {league_emoji} {league_name}\n'
+        f'├ Оборот: {turnover} {money}\n'
+        f'└ До следующей лиги: {next_league} {money}'
     )
     
     keyboard = [
