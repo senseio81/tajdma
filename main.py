@@ -1,132 +1,211 @@
 import os
-import requests
-import time
-import random
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils import executor
+import logging
+from datetime import datetime, date
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ParseMode
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-# Вставьте свои реальные токены
-BOT_TOKEN = "8729937825:AAH4pBjxa0T5RZz4ZJo_yqpQQvKpEhPeJio"
-CRYPTO_TOKEN = "55871:AAroJKn4AgOhd3XcCt6dFDH5W2P9Ezac2Dd"
+logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-API_URL = "https://testnet-pay.crypt.bot/api/"
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-headers = {
-    "Crypto-Pay-API-Token": CRYPTO_TOKEN
-}
+def init_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            balance FLOAT DEFAULT 0.0,
+            turnover FLOAT DEFAULT 0.0,
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            premium BOOLEAN DEFAULT FALSE,
+            bonus_claimed BOOLEAN DEFAULT FALSE
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
-# тестовый баланс пользователей
-user_balance = {}
-# хранилище использованных spend_id
-used_spend_ids = set()
+def get_user(user_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    return user
 
-def generate_spend_id():
-    """Генерирует уникальный spend_id"""
-    # Комбинация timestamp и случайного числа
-    timestamp = int(time.time() * 1000)
-    random_part = random.randint(1000, 9999)
-    spend_id = f"{timestamp}{random_part}"
-    return spend_id
+def create_user(user_id, username, first_name):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO users (user_id, username, first_name) VALUES (%s, %s, %s)",
+        (user_id, username, first_name)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
 
-@dp.message_handler(commands=["start"])
-async def start(message: types.Message):
-    user_balance[message.from_user.id] = 5  # тестовый баланс
+def update_user_data(user_id, balance=None, turnover=None):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    if balance is not None:
+        cur.execute("UPDATE users SET balance = %s WHERE user_id = %s", (balance, user_id))
+    if turnover is not None:
+        cur.execute("UPDATE users SET turnover = %s WHERE user_id = %s", (turnover, user_id))
+    conn.commit()
+    cur.close()
+    conn.close()
 
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("💸 Вывод", callback_data="withdraw"))
+def get_league(turnover):
+    if turnover < 300:
+        return ("👀", "Зритель", "5210956306952758910")
+    elif turnover < 600:
+        return ("⚡️", "Новичок", "5456140674028019486")
+    else:
+        return ("👑", "Профи", "5217822164362739968")
 
-    await message.answer(
-        f"Ваш баланс: {user_balance[message.from_user.id]} USDT\n"
-        f"ID пользователя: {message.from_user.id}",
-        reply_markup=kb
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    username = user.username
+    first_name = user.first_name
+    
+    existing_user = get_user(user_id)
+    if not existing_user:
+        create_user(user_id, username, first_name)
+    
+    reply_keyboard = [["🎲 Играть", "🔐 Профиль"]]
+    markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        f'<tg-emoji emoji-id="5461151367559141950">🎉</tg-emoji> Добро пожаловать, @{username}!',
+        parse_mode=ParseMode.HTML,
+        reply_markup=markup
     )
 
-@dp.message_handler(commands=["balance"])
-async def check_balance(message: types.Message):
-    balance = user_balance.get(message.from_user.id, 0)
-    await message.answer(f"Ваш баланс: {balance} USDT")
-
-@dp.callback_query_handler(lambda c: c.data == "withdraw")
-async def withdraw(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    balance = user_balance.get(user_id, 0)
-
-    if balance <= 0:
-        await callback.message.answer("❌ Баланс пуст")
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_data = get_user(user_id)
+    
+    if not user_data:
+        await update.message.reply_text("Ошибка. Напишите /start")
         return
-
-    # Генерируем уникальный spend_id
-    spend_id = generate_spend_id()
     
-    # Проверяем, не использовался ли уже такой spend_id
-    while spend_id in used_spend_ids:
-        spend_id = generate_spend_id()
+    days = (date.today() - user_data["joined_at"].date()).days
+    balance = user_data["balance"]
+    turnover = user_data["turnover"]
     
-    used_spend_ids.add(spend_id)
+    emoji, league_name, emoji_id = get_league(turnover)
+    
+    if turnover < 300:
+        next_league = f"{300 - turnover} из 300"
+    elif turnover < 600:
+        next_league = f"{600 - turnover} из 300"
+    else:
+        next_league = "Максимальная лига достигнута 👑"
+    
+    text = (
+        f'<tg-emoji emoji-id="5427168083074628963">💎</tg-emoji> Ваш профиль ›\n'
+        f'├ Баланс: {balance} <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji>\n\n'
+        f'<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> Вы с нами уже {days} дней\n\n'
+        f'<tg-emoji emoji-id="5438496463044752972">⭐️</tg-emoji> Ваша лига: <tg-emoji emoji-id="{emoji_id}">{emoji}</tg-emoji> {league_name}\n'
+        f'├ Оборот: {turnover} <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji>\n'
+        f'└ До следующей лиги: {next_league} <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji>'
+    )
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("💳 Пополнить", callback_data="deposit"),
+            InlineKeyboardButton("📤 Вывести", callback_data="withdraw")
+        ],
+        [
+            InlineKeyboardButton("💎 Акция 250$", callback_data="promo"),
+            InlineKeyboardButton("🧩 Поддержка", url="https://t.me/MNGhotdice")
+        ]
+    ]
+    markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
 
-    data = {
-        "user_id": str(user_id),  # Конвертируем в строку
-        "asset": "USDT",
-        "amount": str(balance),  # Конвертируем в строку
-        "spend_id": spend_id,  # Обязательный параметр
-        "description": f"Вывод средств для пользователя {user_id}"  # Опционально
-    }
+async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "🔐 Профиль":
+        await update.message.reply_text("🔐")
+        await profile(update, context)
+    elif text == "🎲 Играть":
+        await update.message.reply_text("🚧 Игра в разработке")
 
-    await callback.message.answer("⏳ Обработка запроса на вывод...")
-
-    try:
-        print(f"Отправка запроса: {data}")
-        print(f"Headers: {headers}")
+async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "deposit":
+        await query.edit_message_text("🚧 Пополнение в разработке")
+    elif query.data == "withdraw":
+        await query.edit_message_text("🚧 Вывод в разработке")
+    elif query.data == "promo":
+        promo_text = (
+            "💎 Акция 250$\n\n"
+            "💳 Хочешь зарабатывать на Hot Dice ежедневно, абсолютно ничего не делая кроме одного простого действия?\n\n"
+            "Установи в свой ник — @Hot_DiceBot\n"
+            "(пример: Ваш Ник | @Hot_DiceBot)\n\n"
+            "И поставь в био — 🎲 250$+ в день сидя на диване, и играя в кубы - @Hot_Dicebot\n\n"
+            "💎 И Вы получите:\n\n"
+            "> *+1% к кешбеку (пока соблюдены правила)*\n"
+            "> *+0.028x к коэффициенту (пока соблюдены правила)*\n"
+            "> *12.5$ рандомным 20-ти людям на CryptoBot ЕЖЕДНЕВНО*\n\n"
+            "Не пропусти возможность учавствовать! Просто вставь наш линк в ник и био, и лутай бабки ежедневно 💸\n"
+            "— И не расстраивайся, если ты не выиграл сегодня, у тебя еще много шансов!"
+        )
+        keyboard = [[InlineKeyboardButton("✅ Участвовать", callback_data="join_promo")]]
+        markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(promo_text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+    elif query.data == "join_promo":
+        user = update.effective_user
+        first_name = user.first_name or ""
+        bio = user.bio or ""
         
-        r = requests.post(API_URL + "transfer", headers=headers, json=data)
-        print(f"Ответ: {r.text}")
-        print(f"Статус код: {r.status_code}")
+        name_ok = "Hot_DiceBot" in first_name or "@Hot_DiceBot" in first_name
+        bio_ok = "🎲 250$+ в день сидя на диване, и играя в кубы - @Hot_Dicebot" in bio
         
-        result = r.json()
-
-        if result.get("ok"):
-            user_balance[user_id] = 0
-            await callback.message.answer(
-                f"✅ Выплата отправлена!\n"
-                f"Сумма: {balance} USDT\n"
-                f"ID транзакции: {spend_id}"
+        if name_ok and bio_ok:
+            await query.answer("✅ Вы участвуете в акции!", show_alert=True)
+        elif not name_ok and not bio_ok:
+            await query.answer(
+                "❌ Для участия установите:\n1. В имя: @Hot_DiceBot\n2. В био: 🎲 250$+ в день сидя на диване, и играя в кубы - @Hot_Dicebot",
+                show_alert=True
+            )
+        elif not name_ok:
+            await query.answer(
+                "❌ Для участия установите в имя @Hot_DiceBot\nПример: Ваше Имя | @Hot_DiceBot",
+                show_alert=True
             )
         else:
-            error = result.get("error", {})
-            error_name = error.get("name") if isinstance(error, dict) else error
-            error_desc = result.get("description", "Неизвестная ошибка")
-            
-            # Если ошибка из-за spend_id, удаляем его из использованных
-            if error_name == "SPEND_ID_REQUIRED":
-                used_spend_ids.discard(spend_id)
-            
-            await callback.message.answer(
-                f"❌ Ошибка выплаты\n"
-                f"Код: {error_name}\n"
-                f"Описание: {error_desc}"
+            await query.answer(
+                "❌ Для участия установите в био:\n🎲 250$+ в день сидя на диване, и играя в кубы - @Hot_Dicebot",
+                show_alert=True
             )
-    except Exception as e:
-        used_spend_ids.discard(spend_id)  # Удаляем spend_id в случае ошибки
-        await callback.message.answer(f"❌ Ошибка соединения: {str(e)}")
 
-@dp.message_handler(commands=["help"])
-async def help_command(message: types.Message):
-    help_text = """
-    Доступные команды:
-    /start - начать работу
-    /balance - проверить баланс
-    /help - показать это сообщение
+def main():
+    init_db()
     
-    Для вывода средств нажмите кнопку "💸 Вывод"
-    """
-    await message.answer(help_text)
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Text(["🔐 Профиль", "🎲 Играть"]), handle_reply_buttons))
+    app.add_handler(CallbackQueryHandler(handle_inline_buttons))
+    
+    app.run_polling()
 
 if __name__ == "__main__":
-    print("Бот запущен...")
-    print(f"API URL: {API_URL}")
-    print("Ожидание команд...")
-    executor.start_polling(dp)
+    main()
