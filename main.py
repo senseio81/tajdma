@@ -163,15 +163,15 @@ async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TY
             "(пример: Ваш Ник | @Hot_DiceBot)\n\n"
             "И поставь в био — 🎲 250$+ в день сидя на диване, и играя в кубы - @Hot_Dicebot\n\n"
             "💎 И Вы получите:\n\n"
-            "> *+1% к кешбеку (пока соблюдены правила)*\n"
-            "> *+0.028x к коэффициенту (пока соблюдены правила)*\n"
-            "> *12.5$ рандомным 20-ти людям на CryptoBot ЕЖЕДНЕВНО*\n\n"
+            "➡️ <b>+1% к кешбеку</b> (пока соблюдены правила)\n"
+            "➡️ <b>+0.028x к коэффициенту</b> (пока соблюдены правила)\n"
+            "➡️ <b>12.5$</b> рандомным 20-ти людям на CryptoBot ЕЖЕДНЕВНО\n\n"
             "Не пропусти возможность учавствовать! Просто вставь наш линк в ник и био, и лутай бабки ежедневно 💸\n"
             "— И не расстраивайся, если ты не выиграл сегодня, у тебя еще много шансов!"
         )
         keyboard = [[InlineKeyboardButton("✅ Участвовать", callback_data="join_promo")]]
         markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(promo_text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+        await query.edit_message_text(promo_text, parse_mode=ParseMode.HTML, reply_markup=markup)
     elif query.data == "join_promo":
         user = update.effective_user
         user_id = user.id
