@@ -27,7 +27,9 @@ def init_db():
             turnover FLOAT DEFAULT 0.0,
             joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             premium BOOLEAN DEFAULT FALSE,
-            bonus_claimed BOOLEAN DEFAULT FALSE
+            bonus_claimed BOOLEAN DEFAULT FALSE,
+            promo_name TEXT,
+            promo_bio TEXT
         )
     """)
     conn.commit()
@@ -172,29 +174,22 @@ async def handle_inline_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(promo_text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
     elif query.data == "join_promo":
         user = update.effective_user
-        first_name = user.first_name or ""
-        bio = user.bio or ""
+        user_id = user.id
+        current_name = user.first_name or ""
+        current_bio = user.bio or ""
         
-        name_ok = "Hot_DiceBot" in first_name or "@Hot_DiceBot" in first_name
-        bio_ok = "🎲 250$+ в день сидя на диване, и играя в кубы - @Hot_Dicebot" in bio
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE users 
+            SET promo_name = %s, promo_bio = %s 
+            WHERE user_id = %s
+        """, (current_name, current_bio, user_id))
+        conn.commit()
+        cur.close()
+        conn.close()
         
-        if name_ok and bio_ok:
-            await query.answer("✅ Вы участвуете в акции!", show_alert=True)
-        elif not name_ok and not bio_ok:
-            await query.answer(
-                "❌ Для участия установите:\n1. В имя: @Hot_DiceBot\n2. В био: 🎲 250$+ в день сидя на диване, и играя в кубы - @Hot_Dicebot",
-                show_alert=True
-            )
-        elif not name_ok:
-            await query.answer(
-                "❌ Для участия установите в имя @Hot_DiceBot\nПример: Ваше Имя | @Hot_DiceBot",
-                show_alert=True
-            )
-        else:
-            await query.answer(
-                "❌ Для участия установите в био:\n🎲 250$+ в день сидя на диване, и играя в кубы - @Hot_Dicebot",
-                show_alert=True
-            )
+        await query.answer("✅ Вы участвуете в акции! Ваши данные сохранены.", show_alert=True)
 
 def main():
     init_db()
