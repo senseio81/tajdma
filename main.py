@@ -140,7 +140,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     text = update.message.text
     
     if text == "🔐 Профиль":
-        await update.message.reply_text("🔐")
+        await update.message.reply_text("🔐", reply_to_message_id=update.message.message_id)
         await profile(update, context)
     elif text == "🎲 Играть":
         await update.message.reply_text("🚧 Игра в разработке")
